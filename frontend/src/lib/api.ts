@@ -41,8 +41,8 @@ export type {
 };
 
 const API_BASE = typeof window !== 'undefined' 
-  ? `http://${window.location.hostname}:8002`
-  : 'http://localhost:8002';
+  ? `http://${window.location.hostname}:8080`
+  : 'http://localhost:8080';
 
 // API 错误类
 class APIError extends Error {
