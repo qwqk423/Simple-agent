@@ -65,7 +65,7 @@ interface AppState {
   isStreaming: boolean;
   sidebarWidth: number;
   inspectorWidth: number;
-  inspectorTab: 'memory' | 'skills' | 'files' | 'settings';
+  inspectorTab: 'memory' | 'skills' | 'files' | 'settings' | 'models';
   inspectorFilePath: string | null;
   ragMode: boolean;
   llmParams: LLMParams;
@@ -92,7 +92,7 @@ interface AppState {
   executeCompress: () => Promise<void>;
   compressSession: () => Promise<void>; // 兼容旧方法
   toggleRagMode: () => Promise<void>;
-  setInspectorTab: (tab: 'memory' | 'skills' | 'files' | 'settings') => void;
+  setInspectorTab: (tab: 'memory' | 'skills' | 'files' | 'settings' | 'models') => void;
   setInspectorFilePath: (path: string | null) => void;
   setSidebarWidth: (width: number) => void;
   setInspectorWidth: (width: number) => void;
@@ -146,7 +146,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [isStreaming, setIsStreaming] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(260);
   const [inspectorWidth, setInspectorWidth] = useState(400);
-  const [inspectorTab, setInspectorTab] = useState<'memory' | 'skills' | 'files' | 'settings'>('memory');
+  const [inspectorTab, setInspectorTab] = useState<'memory' | 'skills' | 'files' | 'settings' | 'models'>('memory');
   const [inspectorFilePath, setInspectorFilePath] = useState<string | null>(null);
   const [ragMode, setRagMode] = useState(false);
   const [llmParams, setLLMParams] = useState<LLMParams>(DEFAULT_LLM_PARAMS);
