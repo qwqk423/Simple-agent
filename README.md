@@ -162,7 +162,7 @@ RERANK_MODEL=qwen3-vl-rerank
 python app.py
 ```
 
-后端服务将在 http://localhost:8002 运行
+后端服务将在 http://localhost:8080 运行
 
 ### 4. 启动前端
 
@@ -537,18 +537,28 @@ RERANK_MODEL=qwen3-vl-rerank
 | `thinking_enabled` | bool | true | 思考模式开关 |
 | `rag_mode` | bool | false | RAG 模式开关 |
 
-### 前端代理配置
+### 前端配置
+
+前端通过环境变量配置后端 API 地址：
+
+```env
+# .env.local 或部署平台环境变量
+NEXT_PUBLIC_API_URL=https://your-backend-url  # 可选，不设置则使用默认值
+```
+
+**默认行为**：
+- 浏览器环境：自动使用当前域名 + `:8080` 端口
+- 服务端渲染：默认 `http://localhost:8080`
+
+**next.config.js 配置**：
 
 ```javascript
-// next.config.js
-async rewrites() {
-  return [
-    {
-      source: '/api/:path*',
-      destination: 'http://localhost:8002/api/:path*',
-    },
-  ];
-}
+const nextConfig = {
+  output: 'standalone',  // Docker 部署优化
+  env: {
+    NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL || '',
+  },
+};
 ```
 
 ---
@@ -664,7 +674,7 @@ async rewrites() {
 
 ### AI 对话无响应
 
-1. 检查后端是否运行：`curl http://localhost:8002/health`
+1. 检查后端是否运行：`curl http://localhost:8080/health`
 2. 检查 API Key 是否有效
 3. 查看后端日志错误信息
 
