@@ -72,7 +72,7 @@ def initialize_app():
 
     logger.info("=" * 50)
     logger.info("Simple Agent 启动成功！")
-    logger.info(f"API 地址: http://localhost:8002")
+    logger.info(f"API 地址: http://localhost:8080")
     logger.info("=" * 50)
 
 
@@ -169,7 +169,7 @@ if __name__ == "__main__":
         uvicorn.run(
             "app:app",
             host="0.0.0.0",
-            port=8002,
+            port=8080,
             reload=True
         )
     except KeyboardInterrupt:
