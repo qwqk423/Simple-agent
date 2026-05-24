@@ -1,0 +1,27 @@
+# FastAPI & Server
+fastapi==0.115.0
+uvicorn[standard]==0.32.0
+python-multipart==0.0.17
+python-dotenv==1.0.1
+
+# LangChain & Agent
+langchain==0.3.7
+langchain-core==0.3.34
+langchain-community==0.3.5
+langchain-openai==0.2.0
+
+# LlamaIndex for RAG
+llama-index-core==0.12.0
+
+# HTML Processing
+beautifulsoup4==4.12.3
+html2text==2024.2.26
+requests==2.32.3
+
+# Token Counting
+tiktoken==0.8.0
+
+# Utilities
+pyyaml==6.0.2
+pydantic==2.9.2
+pydantic-settings==2.6.1
