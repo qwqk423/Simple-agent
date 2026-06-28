@@ -500,7 +500,6 @@ class SessionManager:
         
         original_messages = original_data.get("messages", [])
         last_compressed_index = efficient_data.get("last_compressed_index", -1)
-        compressed_rounds = efficient_data.get("compressed_rounds", 0)
         
         # 获取新增消息（从上次压缩的索引之后）
         new_messages = original_messages[last_compressed_index + 1:]

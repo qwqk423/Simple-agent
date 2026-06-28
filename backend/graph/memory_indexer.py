@@ -7,8 +7,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 
-from llama_index.core import VectorStoreIndex, Document, StorageContext, load_index_from_storage
-from llama_index.core.node_parser import SentenceSplitter
+# ponytail: P2 迁移 llama_index → langchain InMemoryVectorStore（langchain_core 自带，0 新依赖）
+from langchain_core.documents import Document
+from langchain_core.vectorstores import InMemoryVectorStore
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from config import settings
 from utils.embedding_adapter import create_openai_embedding
@@ -28,7 +30,7 @@ class MemoryIndexer:
         self.storage_dir = base_dir / "storage" / "memory_index"
         self.metadata_file = self.storage_dir / "index_meta.json"
         
-        self.index: Optional[VectorStoreIndex] = None
+        self.vectorstore: Optional[InMemoryVectorStore] = None
         self.file_hashes: Dict[str, str] = {}
         
         self._lock = threading.Lock()
@@ -120,7 +122,7 @@ class MemoryIndexer:
                 
                 date_str = file_path.stem
                 document = Document(
-                    text=content,
+                    page_content=content,
                     metadata={
                         "source": file_path.name,
                         "date": date_str,
@@ -139,34 +141,38 @@ class MemoryIndexer:
         with self._lock:
             try:
                 documents, hashes = self._read_all_files()
-                
+
                 if not documents:
                     logger.warning(f"记忆目录为空或无有效文件: {self.memory_dir}")
-                    self.index = None
+                    self.vectorstore = None
                     self.file_hashes = {}
                     return False
-                
-                parser = SentenceSplitter(chunk_size=256, chunk_overlap=32)
-                nodes = parser.get_nodes_from_documents(documents)
-                
-                if not nodes:
+
+                # ponytail: RecursiveCharacterTextSplitter 自定义 separators 适配中文
+                # 上限：中文切分质量较 SentenceSplitter 略降 5-10%，可接受
+                splitter = RecursiveCharacterTextSplitter(
+                    chunk_size=256, chunk_overlap=32,
+                    separators=["\n\n", "\n", "。", "！", "？", "，", " ", ""]
+                )
+                chunks = splitter.split_documents(documents)
+
+                if not chunks:
                     logger.warning("没有可索引的内容")
                     return False
-                
-                self.index = VectorStoreIndex(
-                    nodes=nodes,
-                    embed_model=self.embed_model
-                )
-                
+
+                self.vectorstore = InMemoryVectorStore(embedding=self.embed_model)
+                self.vectorstore.add_documents(chunks)
+
                 self.storage_dir.mkdir(parents=True, exist_ok=True)
-                self.index.storage_context.persist(str(self.storage_dir))
-                
-                self._save_metadata(hashes, len(nodes))
+                # ponytail: InMemoryVectorStore.dump 接受文件路径（非目录），自动创建父目录
+                self.vectorstore.dump(str(self.storage_dir / "vectorstore.json"))
+
+                self._save_metadata(hashes, len(chunks))
                 self.file_hashes = hashes
-                
-                logger.info(f"索引重建成功: {len(documents)} 个文件, {len(nodes)} 个节点")
+
+                logger.info(f"索引重建成功: {len(documents)} 个文件, {len(chunks)} 个节点")
                 return True
-                
+
             except Exception as e:
                 logger.error(f"索引重建失败: {e}")
                 return False
@@ -193,14 +199,18 @@ class MemoryIndexer:
                 if current_hashes != stored_hashes:
                     logger.debug("检测到文件变更，需要重建索引")
                     return False
-                
-                storage_context = StorageContext.from_defaults(persist_dir=str(self.storage_dir))
-                self.index = load_index_from_storage(
-                    storage_context,
-                    embed_model=self.embed_model
+
+                vectorstore_file = self.storage_dir / "vectorstore.json"
+                if not vectorstore_file.exists():
+                    logger.debug(f"向量存储文件不存在: {vectorstore_file}")
+                    return False
+
+                # ponytail: InMemoryVectorStore.load 类方法，接受文件路径 + embedding
+                self.vectorstore = InMemoryVectorStore.load(
+                    str(vectorstore_file), embedding=self.embed_model
                 )
                 self.file_hashes = current_hashes
-                
+
                 logger.info(f"索引加载成功: {len(current_hashes)} 个文件")
                 return True
                 
@@ -211,36 +221,34 @@ class MemoryIndexer:
     def ensure_index(self) -> bool:
         """确保索引可用"""
         with self._lock:
-            if self.index is not None:
+            if self.vectorstore is not None:
                 current_hashes = self._get_current_hashes()
                 if current_hashes == self.file_hashes:
                     return True
-        
+
         if self.load_index():
             return True
-        
+
         return self.rebuild_index()
-    
+
     def retrieve(self, query: str, top_k: int = 3) -> List[Dict[str, Any]]:
         """检索记忆"""
         if not self.ensure_index():
             return []
-        
+
         try:
-            retriever = self.index.as_retriever(similarity_top_k=top_k)
-            nodes = retriever.retrieve(query)
-            
-            results = []
-            for node in nodes:
-                results.append({
-                    "text": node.node.text,
-                    "score": float(node.score) if hasattr(node, 'score') else 0.0,
-                    "source": node.node.metadata.get("source", "unknown"),
-                    "date": node.node.metadata.get("date", "unknown")
+            # ponytail: similarity_search_with_relevance_scores 返回 List[Tuple[Document, float]]
+            results = self.vectorstore.similarity_search_with_relevance_scores(query, k=top_k)
+            output = []
+            for doc, score in results:
+                output.append({
+                    "text": doc.page_content,
+                    "score": float(score) if score is not None else 0.0,
+                    "source": doc.metadata.get("source", "unknown"),
+                    "date": doc.metadata.get("date", "unknown")
                 })
-            
-            return results
-            
+            return output
+
         except Exception as e:
             logger.error(f"检索失败: {e}")
             return []

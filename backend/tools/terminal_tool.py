@@ -6,7 +6,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import Optional, Union, Dict, Any
+from typing import Optional, Union
 from pydantic import BaseModel, Field
 from langchain_core.tools import BaseTool, StructuredTool
 
@@ -172,8 +172,8 @@ def _build_description(base_dir: Path, workspace_dir: Path) -> str:
     """根据 OS 生成动态工具描述"""
     if _SHELL_TYPE in ("pwsh", "powershell"):
         shell_note = (
-            f"当前 Shell: **PowerShell**（`ls`=`Get-ChildItem`, `cat`=`Get-Content`, "
-            f"`rm`=`Remove-Item`, `cp`=`Copy-Item`, `mv`=`Move-Item`，Linux 常用命令自动映射为别名）"
+            "当前 Shell: **PowerShell**（`ls`=`Get-ChildItem`, `cat`=`Get-Content`, "
+            "`rm`=`Remove-Item`, `cp`=`Copy-Item`, `mv`=`Move-Item`，Linux 常用命令自动映射为别名）"
         )
         examples = """【使用示例】
 1. 列出文件: "ls" 或 "Get-ChildItem"
@@ -184,7 +184,7 @@ def _build_description(base_dir: Path, workspace_dir: Path) -> str:
 6. 安装依赖: "cd backend && pip install -r requirements.txt"
 7. 检查进程: "Get-Process python" """
     else:
-        shell_note = f"当前 Shell: **Bash**"
+        shell_note = "当前 Shell: **Bash**"
         examples = """【使用示例】
 1. 列出文件: "ls -la"
 2. 查看文件: "cat README.md"

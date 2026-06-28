@@ -1,7 +1,7 @@
 """技能目录扫描器"""
 import re
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 import yaml
 
 from utils.logger import get_logger

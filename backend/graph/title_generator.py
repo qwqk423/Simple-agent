@@ -53,7 +53,7 @@ class TitleGenerator:
 
             # 检查响应是否有效
             if not response or not hasattr(response, 'content'):
-                logger.warning(f"LLM响应无效，使用默认标题")
+                logger.warning("LLM响应无效，使用默认标题")
                 return self.DEFAULT_TITLE
 
             raw_title = response.content.strip()

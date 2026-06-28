@@ -1,5 +1,4 @@
 """会话管理 API"""
-import json
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 

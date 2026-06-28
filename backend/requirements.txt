@@ -1,27 +1,28 @@
 # FastAPI & Server
-fastapi==0.115.0
-uvicorn[standard]==0.32.0
-python-multipart==0.0.17
+fastapi==0.136.3
+uvicorn[standard]==0.49.0
+python-multipart==0.0.21
 python-dotenv==1.0.1
 
-# LangChain & Agent
-langchain==0.3.7
-langchain-core==0.3.34
-langchain-community==0.3.5
-langchain-openai==0.2.0
+# LangChain 1.x（langchain-core / langgraph 由 langchain 主包自动传递）
+langchain==1.3.9
+langchain-openai==1.3.2
+# langchain-text-splitters 1.x：RecursiveCharacterTextSplitter（独立包，非 langchain 主包传递）
+langchain-text-splitters==1.1.2
+# openai SDK 必须是 2.x：langchain-openai 1.3.2 要求 openai>=2.26
+openai>=2.26.0,<3.0.0
 
-# LlamaIndex for RAG
-llama-index-core==0.12.0
+# HTML Processing（fetch_url_tool 用，html2text 保留做 HTML→markdown 转换）
+html2text==2025.4.15
 
-# HTML Processing
-beautifulsoup4==4.12.3
-html2text==2024.2.26
-requests==2.32.3
+# PDF Processing（search_knowledge_tool 用，纯 Python 轻量；未装则跳过 PDF）
+pypdf==5.9.0
 
-# Token Counting
-tiktoken==0.8.0
+# Token Counting（prompt_builder 用）
+tiktoken==0.13.0
 
 # Utilities
 pyyaml==6.0.2
-pydantic==2.9.2
-pydantic-settings==2.6.1
+pydantic==2.11.9
+# pydantic-settings 2.14.2 含安全补丁（NestedSecretsSettingsSource symlink traversal 修复）
+pydantic-settings==2.14.2

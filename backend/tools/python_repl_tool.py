@@ -2,7 +2,6 @@
 import io
 import sys
 from pathlib import Path
-from typing import Any, Dict, Union
 from pydantic import BaseModel, Field
 from langchain_core.tools import BaseTool, StructuredTool
 
@@ -77,7 +76,7 @@ def create_python_repl_tool() -> BaseTool:
             logger.warning("Python 代码为空")
             return "[错误] 代码不能为空"
 
-        logger.debug(f"Python REPL 工具调用")
+        logger.debug("Python REPL 工具调用")
         return execute_python_code(code)
     
     return StructuredTool.from_function(

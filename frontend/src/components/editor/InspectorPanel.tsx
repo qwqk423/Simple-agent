@@ -1,7 +1,17 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import Editor from "@monaco-editor/react";
+import dynamic from "next/dynamic";
+// ponytail: Monaco 依赖 window，Next.js SSR 会失败，必须 dynamic + ssr:false
+const Editor = dynamic(() => import("@monaco-editor/react").then((mod) => mod.default), {
+  ssr: false,
+  loading: () => (
+    <div className="flex items-center justify-center h-full text-muted-foreground bg-card">
+      <div className="w-5 h-5 border-2 border-primary/30 border-t-primary rounded-full animate-spin mr-2" />
+      加载中...
+    </div>
+  ),
+});
 import { 
   FileText, 
   Save, 

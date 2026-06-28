@@ -233,6 +233,7 @@ async def chat(request: ChatRequest):
                             if save_result:
                                 fallback_title = save_result
                             save_success = True
+                            logger.debug(f"对话保存成功 [{request.session_id}], save_success={save_success}")
                             
                             # 清空已保存的内容，防止 finally 块重复保存
                             assistant_contents = []

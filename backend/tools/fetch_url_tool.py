@@ -2,10 +2,7 @@
 import re
 import json
 import html2text
-import requests
-import urllib3
-from typing import Optional, Union, Dict, Any
-from bs4 import BeautifulSoup
+import httpx
 from pydantic import BaseModel, Field
 from langchain_core.tools import BaseTool, StructuredTool
 
@@ -18,9 +15,6 @@ if str(backend_dir) not in sys.path:
 from utils.logger import get_logger
 
 logger = get_logger("FetchUrlTool")
-
-# 禁用 SSL 警告
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
 def fetch_url_content(url: str) -> str:
@@ -38,7 +32,8 @@ def fetch_url_content(url: str) -> str:
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
         }
-        response = requests.get(url, headers=headers, timeout=15, verify=False)
+        # ponytail: httpx 默认不跟随重定向，需显式开启
+        response = httpx.get(url, headers=headers, timeout=15, verify=False, follow_redirects=True)
         response.raise_for_status()
 
         content = response.text
@@ -68,16 +63,16 @@ def fetch_url_content(url: str) -> str:
         logger.info(f"URL 内容获取成功: {url}, 最终大小={len(result)}")
         return result
 
-    except requests.Timeout:
+    except httpx.TimeoutException:
         logger.error(f"URL 请求超时 (15s): {url}")
         return "[错误] 请求超时 (15s)"
-    except requests.ConnectionError as e:
+    except httpx.ConnectError as e:
         logger.error(f"URL 连接失败: {url}, {e}")
         return f"[错误] 连接失败: {str(e)}"
-    except requests.HTTPError as e:
-        logger.error(f"URL HTTP 错误: {url}, status={e.response.status_code if e.response else 'unknown'}")
-        return f"[错误] HTTP {e.response.status_code if e.response else 'unknown'}: {str(e)}"
-    except requests.RequestException as e:
+    except httpx.HTTPStatusError as e:
+        logger.error(f"URL HTTP 错误: {url}, status={e.response.status_code}")
+        return f"[错误] HTTP {e.response.status_code}: {str(e)}"
+    except httpx.HTTPError as e:
         logger.error(f"URL 请求失败: {url}, {type(e).__name__}: {e}")
         return f"[错误] 请求失败: {str(e)}"
     except Exception as e:
@@ -94,23 +89,20 @@ def _is_json(text: str) -> bool:
 def _clean_html(html: str) -> str:
     """清理 HTML 并转换为 Markdown"""
     try:
-        # 使用 BeautifulSoup 预处理
-        soup = BeautifulSoup(html, "html.parser")
+        # ponytail: 用正则替代 BeautifulSoup 移除 script/style/nav 等标签
+        # 上限：嵌套复杂的 nav/footer 可能残留；升级路径：装 BeautifulSoup
+        for tag in ['script', 'style', 'nav', 'footer', 'header']:
+            html = re.sub(rf'<{tag}[^>]*>.*?</{tag}>', '', html, flags=re.DOTALL | re.IGNORECASE)
+        # 移除 HTML 注释
+        html = re.sub(r'<!--.*?-->', '', html, flags=re.DOTALL)
 
-        # 移除脚本和样式
-        for tag in soup(["script", "style", "nav", "footer", "header"]):
-            tag.decompose()
-
-        # 使用 html2text 转换
         h = html2text.HTML2Text()
         h.ignore_links = False
         h.ignore_images = True
         h.ignore_tables = False
-        h.body_width = 0  # 不自动换行
+        h.body_width = 0
 
-        markdown = h.handle(str(soup))
-
-        # 清理多余空行
+        markdown = h.handle(html)
         markdown = re.sub(r"\n{3,}", "\n\n", markdown)
 
         logger.debug(f"HTML 转 Markdown 成功: 原始大小={len(html)}, 转换后大小={len(markdown)}")

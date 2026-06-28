@@ -2,7 +2,7 @@
 import json
 import uuid
 from pathlib import Path
-from typing import Dict, Any, Union, Optional, List
+from typing import Dict, Any, Optional, List
 from pydantic import BaseModel, Field
 from langchain_core.tools import BaseTool, StructuredTool
 
@@ -194,16 +194,8 @@ def todo_tool_logic(todos_input: List[Any], conversation_id: str = "default") ->
         seen_titles = set()  # 用于去重
         
         for item in todos_input:
-            # 支持 Dict 和 Pydantic Model
-            if hasattr(item, 'dict'):
-                # Pydantic v1
-                item_dict = item.dict()
-            elif hasattr(item, 'model_dump'):
-                # Pydantic v2
-                item_dict = item.model_dump()
-            else:
-                # Dict
-                item_dict = item
+            # ponytail: pydantic v2 已升级，删 v1 .dict() 死代码分支
+            item_dict = item.model_dump() if hasattr(item, 'model_dump') else item
             
             title = item_dict.get("title", "").strip()
             
@@ -247,7 +239,7 @@ def create_todo_tool(base_dir: Path) -> BaseTool:
         base_dir: 基础目录
     """
     
-    def todo_func(todos: List[Dict[str, str]]) -> str:
+    def todo_func(todos: List[TodoItem]) -> str:
         """
         更新待办事项列表，并返回当前状态。
         传入完整的列表会替换现有列表，用于创建、更新、完成任务。

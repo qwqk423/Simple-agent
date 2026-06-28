@@ -1,7 +1,6 @@
 """Glob 文件模式匹配工具 - 快速查找匹配特定模式的文件"""
-import os
 from pathlib import Path
-from typing import Dict, Any, Union, Optional, List
+from typing import Optional
 from pydantic import BaseModel, Field
 from langchain_core.tools import BaseTool, StructuredTool
 

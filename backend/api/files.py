@@ -1,6 +1,4 @@
 """文件操作 API"""
-import re
-from pathlib import Path
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 

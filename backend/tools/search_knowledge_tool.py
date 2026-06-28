@@ -1,4 +1,4 @@
-"""知识库搜索工具 - 使用 LlamaIndex"""
+"""知识库搜索工具 - 使用 langchain InMemoryVectorStore"""
 import asyncio
 import sys
 from pathlib import Path
@@ -6,8 +6,10 @@ from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, Field
 from langchain_core.tools import BaseTool, StructuredTool
 
-from llama_index.core import VectorStoreIndex, SimpleDirectoryReader, StorageContext, load_index_from_storage
-from llama_index.core.node_parser import SentenceSplitter
+# ponytail: P2 迁移 llama_index → langchain InMemoryVectorStore（langchain_core 自带，0 新依赖）
+from langchain_core.documents import Document
+from langchain_core.vectorstores import InMemoryVectorStore
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from utils.embedding_adapter import create_openai_embedding
 
@@ -27,7 +29,7 @@ class KnowledgeBaseSearch:
         self.base_dir = base_dir
         self.knowledge_dir = base_dir / "knowledge"
         self.storage_dir = base_dir / "storage" / "knowledge_index"
-        self.index: Optional[VectorStoreIndex] = None
+        self.vectorstore: Optional[InMemoryVectorStore] = None
         self.embed_model = None
         self._lock = asyncio.Lock()  # 并发锁
         self._init_embed_model()
@@ -72,11 +74,32 @@ class KnowledgeBaseSearch:
         logger.info(f"开始构建知识库索引: {len(files)} 个文件")
 
         try:
-            # 加载文档
-            documents = SimpleDirectoryReader(
-                str(self.knowledge_dir),
-                required_exts=[".pdf", ".md", ".txt"]
-            ).load_data()
+            # ponytail: 替代 SimpleDirectoryReader，手动按扩展名选 loader
+            # .md/.txt 直接 read_text；.pdf 用 pypdf（纯 Python 轻量，可选依赖）
+            # 上限：PDF 解析质量取决于 pypdf；升级路径：UnstructuredPDFLoader
+            documents = []
+            for f in files:
+                try:
+                    if f.suffix.lower() == ".pdf":
+                        try:
+                            from pypdf import PdfReader
+                        except ImportError:
+                            logger.warning(f"pypdf 未安装，跳过 PDF: {f}")
+                            continue
+                        reader = PdfReader(str(f))
+                        text = "\n\n".join(
+                            page.extract_text() for page in reader.pages if page.extract_text()
+                        )
+                        if text:
+                            documents.append(Document(page_content=text, metadata={"source": f.name}))
+                    else:
+                        # .md / .txt 直接读取
+                        content = f.read_text(encoding='utf-8', errors='ignore')
+                        if content.strip():
+                            documents.append(Document(page_content=content, metadata={"source": f.name}))
+                except Exception as e:
+                    logger.warning(f"读取文件失败 {f}: {e}")
+                    continue
 
             if not documents:
                 logger.warning("知识库文档加载失败或为空")
@@ -85,21 +108,24 @@ class KnowledgeBaseSearch:
             logger.debug(f"加载了 {len(documents)} 个文档")
 
             # 分割节点
-            parser = SentenceSplitter(chunk_size=512, chunk_overlap=50)
-            nodes = parser.get_nodes_from_documents(documents)
-            logger.debug(f"分割为 {len(nodes)} 个节点")
+            # ponytail: RecursiveCharacterTextSplitter 自定义 separators 适配中文
+            splitter = RecursiveCharacterTextSplitter(
+                chunk_size=512, chunk_overlap=50,
+                separators=["\n\n", "\n", "。", "！", "？", "，", " ", ""]
+            )
+            chunks = splitter.split_documents(documents)
+            logger.debug(f"分割为 {len(chunks)} 个节点")
 
             # 构建索引
-            self.index = VectorStoreIndex(
-                nodes=nodes,
-                embed_model=self.embed_model
-            )
+            self.vectorstore = InMemoryVectorStore(embedding=self.embed_model)
+            self.vectorstore.add_documents(chunks)
 
             # 持久化
             self.storage_dir.mkdir(parents=True, exist_ok=True)
-            self.index.storage_context.persist(str(self.storage_dir))
+            # ponytail: InMemoryVectorStore.dump 接受文件路径（非目录），自动创建父目录
+            self.vectorstore.dump(str(self.storage_dir / "vectorstore.json"))
 
-            logger.info(f"知识库索引构建成功: {len(nodes)} 个节点")
+            logger.info(f"知识库索引构建成功: {len(chunks)} 个节点")
             return True
 
         except Exception as e:
@@ -117,18 +143,16 @@ class KnowledgeBaseSearch:
             logger.debug(f"索引存储目录不存在: {self.storage_dir}")
             return False
 
-        # 检查索引文件是否完整
-        required_files = ['docstore.json', 'index_store.json', 'vector_store.json']
-        for f in required_files:
-            if not (self.storage_dir / f).exists():
-                logger.warning(f"索引文件不完整，缺少: {f}")
-                return False
+        # ponytail: InMemoryVectorStore 用单文件持久化，替换原 docstore/index_store/vector_store 三件套
+        vectorstore_file = self.storage_dir / "vectorstore.json"
+        if not vectorstore_file.exists():
+            logger.warning(f"索引文件不完整，缺少: {vectorstore_file}")
+            return False
 
         try:
-            storage_context = StorageContext.from_defaults(persist_dir=str(self.storage_dir))
-            self.index = load_index_from_storage(
-                storage_context,
-                embed_model=self.embed_model
+            # ponytail: InMemoryVectorStore.load 类方法，接受文件路径 + embedding
+            self.vectorstore = InMemoryVectorStore.load(
+                str(vectorstore_file), embedding=self.embed_model
             )
             logger.info("知识库索引加载成功")
             return True
@@ -138,7 +162,7 @@ class KnowledgeBaseSearch:
 
     async def ensure_index(self) -> bool:
         """确保索引可用"""
-        if self.index is not None:
+        if self.vectorstore is not None:
             return True
 
         # 快速检查：如果知识库目录为空，直接返回False
@@ -158,25 +182,24 @@ class KnowledgeBaseSearch:
 
     def search_sync(self, query: str, top_k: int = 3) -> List[Dict[str, Any]]:
         """同步搜索知识库"""
-        if self.index is None:
+        if self.vectorstore is None:
             logger.warning("搜索时索引未初始化")
             return []
 
         try:
             logger.debug(f"开始知识库搜索: query='{query[:50]}...', top_k={top_k}")
-            retriever = self.index.as_retriever(similarity_top_k=top_k)
-            nodes = retriever.retrieve(query)
-
-            results = []
-            for node in nodes:
-                results.append({
-                    "text": node.node.text,
-                    "score": float(node.score) if hasattr(node, 'score') else 0.0,
-                    "source": node.node.metadata.get("file_name", "unknown")
+            # ponytail: similarity_search_with_relevance_scores 返回 List[Tuple[Document, float]]
+            results = self.vectorstore.similarity_search_with_relevance_scores(query, k=top_k)
+            output = []
+            for doc, score in results:
+                output.append({
+                    "text": doc.page_content,
+                    "score": float(score) if score is not None else 0.0,
+                    "source": doc.metadata.get("source", "unknown")
                 })
 
-            logger.info(f"知识库搜索完成: 返回 {len(results)} 个结果")
-            return results
+            logger.info(f"知识库搜索完成: 返回 {len(output)} 个结果")
+            return output
 
         except Exception as e:
             logger.error(f"搜索失败: {type(e).__name__}: {e}")
@@ -188,10 +211,9 @@ class KnowledgeBaseSearch:
             logger.warning("无法确保索引可用")
             return []
 
-        # 在线程池中执行同步搜索
+        # ponytail: asyncio.to_thread 替代 get_event_loop + run_in_executor（Python 3.9+）
         import asyncio
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, lambda: self.search_sync(query, top_k))
+        return await asyncio.to_thread(self.search_sync, query, top_k)
 
 
 # 按 base_dir 缓存搜索器实例
@@ -267,15 +289,16 @@ def create_search_knowledge_tool(base_dir: Path) -> BaseTool:
         """同步搜索知识库"""
         import asyncio
         from concurrent.futures import TimeoutError as ConcurrentTimeoutError
+        # ponytail: get_event_loop 在 Python 3.12+ 已 DeprecationWarning
+        # 用 get_running_loop 替代 is_running 探测，无 running loop 时直接 asyncio.run
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
+            try:
+                loop = asyncio.get_running_loop()
                 future = asyncio.run_coroutine_threadsafe(search_func(query), loop)
                 return future.result(timeout=30)
-            else:
-                return loop.run_until_complete(search_func(query))
-        except RuntimeError:
-            return asyncio.run(search_func(query))
+            except RuntimeError:
+                # 没有 running loop，直接 asyncio.run
+                return asyncio.run(search_func(query))
         except (TimeoutError, ConcurrentTimeoutError):
             logger.error("知识库搜索超时 (30s)")
             return "[错误] 知识库搜索超时，请检查知识库目录是否正常"

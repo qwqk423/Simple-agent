@@ -5,11 +5,13 @@ import os
 import re
 import threading
 from pathlib import Path
-from typing import List, Dict, Any, Optional, Set
+from typing import List, Dict, Any, Optional
 from datetime import datetime
 
-from llama_index.core import VectorStoreIndex, Document, StorageContext, load_index_from_storage
-from llama_index.core.node_parser import CodeSplitter
+# ponytail: P2 迁移 llama_index → langchain InMemoryVectorStore（langchain_core 自带，0 新依赖）
+# 注意：原 CodeSplitter 为死 import，实际用自写 _parse_python_code，直接删除
+from langchain_core.documents import Document
+from langchain_core.vectorstores import InMemoryVectorStore
 
 import sys
 sys.path.append(str(Path(__file__).parent.parent))
@@ -49,7 +51,7 @@ class CodebaseProjectIndexer:
         self.storage_dir = base_dir / "storage" / "codebase_index" / project_name
         self.metadata_file = self.storage_dir / "index_meta.json"
         
-        self.index: Optional[VectorStoreIndex] = None
+        self.vectorstore: Optional[InMemoryVectorStore] = None
         self.file_hashes: Dict[str, str] = {}
         
         # 线程锁
@@ -205,8 +207,6 @@ class CodebaseProjectIndexer:
         in_chunk = False
         
         for i, line in enumerate(lines):
-            matched = False
-            
             if not in_chunk:
                 for pattern, chunk_type in patterns:
                     match = pattern.match(line)
@@ -228,7 +228,6 @@ class CodebaseProjectIndexer:
                         current_lines = [line]
                         brace_count = line.count('{') - line.count('}')
                         in_chunk = True
-                        matched = True
                         break
             else:
                 current_lines.append(line)
@@ -395,7 +394,7 @@ class CodebaseProjectIndexer:
                         
                         for chunk in chunks:
                             doc = Document(
-                                text=chunk['content'],
+                                page_content=chunk['content'],
                                 metadata={
                                     'file_path': relative_path,
                                     'project': self.project_name,
@@ -417,14 +416,13 @@ class CodebaseProjectIndexer:
                     return False
                 
                 # 构建向量索引
-                self.index = VectorStoreIndex.from_documents(
-                    documents,
-                    embed_model=self.embed_model
-                )
-                
+                self.vectorstore = InMemoryVectorStore(embedding=self.embed_model)
+                self.vectorstore.add_documents(documents)
+
                 # 持久化索引
                 self.storage_dir.mkdir(parents=True, exist_ok=True)
-                self.index.storage_context.persist(str(self.storage_dir))
+                # ponytail: InMemoryVectorStore.dump 接受文件路径（非目录），自动创建父目录
+                self.vectorstore.dump(str(self.storage_dir / "vectorstore.json"))
                 
                 # 保存元数据
                 metadata = {
@@ -487,16 +485,20 @@ class CodebaseProjectIndexer:
                 return False
             
             try:
-                storage_context = StorageContext.from_defaults(persist_dir=str(self.storage_dir))
-                self.index = load_index_from_storage(
-                    storage_context,
-                    embed_model=self.embed_model
+                vectorstore_file = self.storage_dir / "vectorstore.json"
+                if not vectorstore_file.exists():
+                    logger.debug(f"[{self.project_name}] 向量存储文件不存在: {vectorstore_file}")
+                    return False
+
+                # ponytail: InMemoryVectorStore.load 类方法，接受文件路径 + embedding
+                self.vectorstore = InMemoryVectorStore.load(
+                    str(vectorstore_file), embedding=self.embed_model
                 )
-                
+
                 # 加载元数据
                 metadata = self._load_metadata()
                 self.file_hashes = metadata.get('file_hashes', {})
-                
+
                 logger.info(f"[{self.project_name}] 索引加载成功")
                 return True
                 
@@ -520,36 +522,36 @@ class CodebaseProjectIndexer:
             return []
         
         try:
-            retriever = self.index.as_retriever(similarity_top_k=top_k)
-            nodes = retriever.retrieve(query)
-            
+            # ponytail: similarity_search_with_relevance_scores 返回 List[Tuple[Document, float]]
+            raw_results = self.vectorstore.similarity_search_with_relevance_scores(query, k=top_k)
+
             results = []
             seen = set()
-            
-            for node in nodes:
-                file_path = node.node.metadata.get('file_path', '')
-                chunk_name = node.node.metadata.get('chunk_name', '')
-                
+
+            for doc, score in raw_results:
+                file_path = doc.metadata.get('file_path', '')
+                chunk_name = doc.metadata.get('chunk_name', '')
+
                 # 去重：相同文件和代码块的只保留一次
                 key = f"{file_path}:{chunk_name}"
                 if key in seen:
                     continue
                 seen.add(key)
-                
+
                 results.append({
-                    'text': node.node.text,
-                    'score': float(node.score) if hasattr(node, 'score') else 0.0,
+                    'text': doc.page_content,
+                    'score': float(score) if score is not None else 0.0,
                     'file_path': file_path,
                     'project': self.project_name,
-                    'chunk_type': node.node.metadata.get('chunk_type', ''),
-                    'chunk_name': node.node.metadata.get('chunk_name', ''),
-                    'start_line': node.node.metadata.get('start_line', 0),
-                    'end_line': node.node.metadata.get('end_line', 0),
+                    'chunk_type': doc.metadata.get('chunk_type', ''),
+                    'chunk_name': doc.metadata.get('chunk_name', ''),
+                    'start_line': doc.metadata.get('start_line', 0),
+                    'end_line': doc.metadata.get('end_line', 0),
                     'source': f"{self.project_name}/{file_path}"
                 })
-            
+
             return results
-            
+
         except Exception as e:
             logger.error(f"[{self.project_name}] 检索失败: {e}")
             return []

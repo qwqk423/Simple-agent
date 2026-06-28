@@ -1,8 +1,7 @@
 """Grep 精确搜索工具 - 基于 ripgrep 的模式匹配，适合已知具体代码片段"""
-import re
 import subprocess
 from pathlib import Path
-from typing import Dict, Any, Union, Optional, List
+from typing import Optional, List
 from pydantic import BaseModel, Field
 from langchain_core.tools import BaseTool, StructuredTool
 
@@ -276,7 +275,7 @@ def create_grep_tool(base_dir: Path) -> BaseTool:
    glob="*.py"
 
 2. 查找 API 调用位置（带上下文）:
-   pattern="api\.example\.com"
+   pattern="api\\.example\\.com"
    context=3
 
 3. 忽略大小写查找配置项:

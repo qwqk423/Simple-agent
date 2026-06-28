@@ -1,10 +1,9 @@
 """全局配置管理"""
-import os
 import json
 import uuid
 from pathlib import Path
 from typing import Optional, List, Dict, Any
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field, BaseModel
 from dotenv import load_dotenv
 
@@ -38,10 +37,9 @@ class Settings(BaseSettings):
     
     # Rerank 模型配置
     rerank_model: str = Field(default="qwen3-vl-rerank", alias="RERANK_MODEL")
-    
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
+
+    # ponytail: pydantic v2 用 model_config 替代废弃的 class Config
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
 
 settings = Settings()
@@ -254,7 +252,7 @@ class ConfigManager:
             try:
                 self.save()
                 logger.info(f"LLM参数更新成功: {key} = {value} (原值: {old_value})")
-            except Exception as e:
+            except Exception:
                 # 保存失败时回滚
                 self._config[key] = old_value
                 logger.error(f"LLM参数更新失败，已回滚: {key} = {old_value}")

@@ -1,8 +1,7 @@
 """文件读取工具 - 直接读取已知路径的文件内容"""
-import re
 import sys
 from pathlib import Path
-from typing import Optional, Union, Dict, Any
+from typing import Optional
 from pydantic import BaseModel, Field
 from langchain_core.tools import BaseTool, StructuredTool
 
@@ -29,7 +28,7 @@ def is_safe_path(root_dir: Path, file_path: str) -> tuple[bool, Optional[str]]:
         target.relative_to(root_dir)
     except ValueError:
         logger.warning(f"路径逃逸检测: {file_path}")
-        return False, f"路径逃逸检测: 禁止访问项目目录外的文件"
+        return False, "路径逃逸检测: 禁止访问项目目录外的文件"
 
     # 检查路径遍历攻击
     if ".." in file_path:

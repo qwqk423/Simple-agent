@@ -90,20 +90,25 @@ def create_llm(
 
         logger.debug(f"创建LLM实例: model={model_config['model']}, temperature={final_temperature}, streaming={streaming}")
 
-        # 应用额外覆盖参数
+        # 思考模式控制：优先 override_params，其次 config_manager.llm_params，默认 True
+        # Qwen3 OpenAI 兼容接口通过 extra_body 中的 enable_thinking 字段控制
+        thinking_enabled = None
+        if override_params and "thinking_enabled" in override_params:
+            thinking_enabled = override_params["thinking_enabled"]
+        else:
+            thinking_enabled = params.get("thinking_enabled", True)
+        llm_kwargs["extra_body"] = {"enable_thinking": bool(thinking_enabled)}
+        logger.debug(f"思考模式: enable_thinking={thinking_enabled}")
+
+        # 应用额外覆盖参数（已处理 thinking_enabled，这里跳过避免重复传给 LangChain）
         if override_params:
-            # 过滤掉 LangChain ChatOpenAI 不支持的参数
-            filtered_params = override_params.copy()
-            unsupported_params = ["thinking_enabled"]
-            for param in unsupported_params:
-                if param in filtered_params:
-                    del filtered_params[param]
-                    logger.debug(f"过滤掉不支持的参数: {param}")
+            filtered_params = {k: v for k, v in override_params.items() if k != "thinking_enabled"}
             llm_kwargs.update(filtered_params)
-            logger.debug(f"应用覆盖参数: {filtered_params}")
+            if filtered_params:
+                logger.debug(f"应用覆盖参数: {filtered_params}")
 
         llm = ChatOpenAI(**llm_kwargs)
-        logger.info(f"LLM实例创建成功: model={model_config['model']}")
+        logger.info(f"LLM实例创建成功: model={model_config['model']}, enable_thinking={thinking_enabled}")
         return llm
 
     except ImportError as e:

@@ -1,5 +1,4 @@
 """文件编辑工具 - 快速小修改（修改变量、修复bug、单行/少量行编辑）"""
-import re
 import sys
 from pathlib import Path
 from typing import Optional
@@ -122,14 +121,14 @@ def edit_file_logic(
                     if hints:
                         logger.warning(f"未找到完全匹配的 old_str，但找到关键字: {path}")
                         return (
-                            f"[错误] 无法在文件中找到完全匹配的 old_str\n"
-                            f"      但找到以下关键字，供您参考:\n" +
+                            "[错误] 无法在文件中找到完全匹配的 old_str\n"
+                            "      但找到以下关键字，供您参考:\n" +
                             '\n'.join(hints) +
                             "\n      建议：复制 exact 的代码片段（包括缩进）"
                         )
 
             logger.warning(f"未找到匹配的 old_str: {path}")
-            return f"[错误] 无法在文件中找到匹配的 old_str 内容"
+            return "[错误] 无法在文件中找到匹配的 old_str 内容"
 
         # 检查匹配次数
         match_count = original_content.count(old_str)

@@ -1,10 +1,13 @@
 """Agent 管理器 - 核心 Agent 逻辑"""
-import asyncio
 import json
+import time
 from pathlib import Path
 from typing import AsyncIterator, Dict, Any, List, Optional
 
-from openai import AsyncOpenAI
+from langchain_core.messages import (
+    SystemMessage, HumanMessage, AIMessage, ToolMessage,
+)
+from langchain_core.messages.utils import convert_to_openai_messages
 
 from config import settings, get_config_manager
 from tools import get_all_tools
@@ -66,11 +69,7 @@ class AgentManager:
             raise
         
         logger.info("Agent管理器初始化完成")
-    
-    def _build_llm(self):
-        """构建 LLM（使用 llm_factory 统一创建）"""
-        return create_llm(streaming=True)
-    
+
     def _get_config_and_prompt(self) -> tuple[dict, str]:
         """
         获取配置参数和 System Prompt
@@ -161,9 +160,9 @@ class AgentManager:
             # 构建完整的 system 消息
             if compressed_summary:
                 combined_system = f"{system_prompt}\n\n[历史对话摘要]\n{compressed_summary}"
-                messages.append({"role": "system", "content": combined_system})
+                messages.append(SystemMessage(content=combined_system))
             else:
-                messages.append({"role": "system", "content": system_prompt})
+                messages.append(SystemMessage(content=system_prompt))
             
             # 历史消息（排除 system 消息）
             # 先处理一遍，收集有效的 tool_call_id
@@ -209,7 +208,7 @@ class AgentManager:
                 tool_calls = msg.get("tool_calls", [])
                 tool_call_id = msg.get("tool_call_id", "")
                 msg_images = msg.get("images", [])
-                
+
                 if role == "user":
                     # 用户消息：支持多模态（文字+图片）
                     if msg_images and len(msg_images) > 0:
@@ -220,22 +219,32 @@ class AgentManager:
                                 "type": "image_url",
                                 "image_url": {"url": img_base64}
                             })
-                        messages.append({"role": role, "content": msg_content})
+                        messages.append(HumanMessage(content=msg_content))
                     else:
-                        messages.append({"role": role, "content": content or ""})
+                        messages.append(HumanMessage(content=content or ""))
                 elif role == "assistant":
                     # Assistant 消息
-                    msg_data = {"role": role, "content": content or ""}
                     if tool_calls:
-                        msg_data["tool_calls"] = tool_calls
-                    messages.append(msg_data)
+                        # 转换为 langchain ToolCall 格式（name/args 而非 function.name/function.arguments）
+                        lc_tool_calls = []
+                        for tc in tool_calls:
+                            fn = tc.get("function", {})
+                            args_str = fn.get("arguments", "{}")
+                            try:
+                                args = json.loads(args_str) if args_str else {}
+                            except json.JSONDecodeError:
+                                args = {"_raw": args_str}
+                            lc_tool_calls.append({
+                                "id": tc.get("id", ""),
+                                "name": fn.get("name", ""),
+                                "args": args,
+                            })
+                        messages.append(AIMessage(content=content or "", tool_calls=lc_tool_calls))
+                    else:
+                        messages.append(AIMessage(content=content or ""))
                 elif role == "tool":
                     # 工具消息
-                    messages.append({
-                        "role": role,
-                        "content": content or "",
-                        "tool_call_id": tool_call_id
-                    })
+                    messages.append(ToolMessage(content=content or "", tool_call_id=tool_call_id))
             
             # 当前用户消息（支持多模态）
             input_text = message
@@ -254,41 +263,17 @@ class AgentManager:
                         "type": "image_url",
                         "image_url": {"url": img_base64}
                     })
-                messages.append({"role": "user", "content": content})
+                messages.append(HumanMessage(content=content))
             else:
-                messages.append({"role": "user", "content": input_text})
+                messages.append(HumanMessage(content=input_text))
             
-            # 工具定义
-            tools = []
-            for tool in self.tools:
-                # 获取参数 schema
-                args_schema = getattr(tool, 'args_schema', None)
-                if args_schema is not None:
-                    try:
-                        parameters = args_schema.schema()
-                    except Exception as e:
-                        logger.warning(f"获取工具 '{tool.name}' 参数schema失败: {e}")
-                        parameters = {"type": "object", "properties": {}}
-                else:
-                    parameters = {"type": "object", "properties": {}}
-                
-                tool_def = {
-                    "type": "function",
-                    "function": {
-                        "name": tool.name,
-                        "description": tool.description,
-                        "parameters": parameters
-                    }
-                }
-                tools.append(tool_def)
-            
-            # 从 config_manager 获取当前模型配置
+            # 从 config_manager 获取当前模型配置（保留用于 last_request 记录）
             current_model = None
             config_manager = get_config_manager()
             if config_manager:
                 current_model = config_manager.get_current_model("llm")
                 logger.debug(f"从 config_manager 获取模型: {current_model}")
-            
+
             # 如果没有获取到，使用 settings 作为回退
             if not current_model:
                 logger.warning("config_manager 未返回模型配置，使用 settings 作为回退")
@@ -297,30 +282,32 @@ class AgentManager:
                     "api_key": settings.openai_api_key,
                     "base_url": settings.openai_base_url,
                 }
-            
-            # 创建 OpenAI 客户端
+
+            # 创建 LLM 实例（复用 llm_factory；思考模式由 extra_body.enable_thinking 控制）
             try:
-                client = AsyncOpenAI(
-                    api_key=current_model["api_key"],
-                    base_url=current_model["base_url"],
+                llm = create_llm(
+                    streaming=True,
+                    model_id=current_model.get("id") if config_manager else None,
                 )
+                # ponytail: 预构建 openai tools 格式（langchain bind_tools 内部转换），循环内复用
+                tools_payload = llm.bind_tools(self.tools).kwargs.get('tools') if self.tools else None
             except Exception as e:
-                logger.error(f"创建OpenAI客户端失败: {e}")
+                logger.error(f"创建LLM实例失败: {e}")
                 raise
-            
+
             logger.debug(f"调用LLM [{session_id}]: model={current_model['model']}")
             
+            # 思考模式开关：Qwen3 通过 extra_body.enable_thinking 控制
+            thinking_enabled = params.get("thinking_enabled", True)
+
             # 记录发送给 LLM 的完整请求
+            # ponytail: 记录实际发给 openai 的请求（转换后 messages + openai tools 格式），前端直接展示
             self.last_request = {
                 "model": current_model["model"],
-                "messages": messages,
-                "tools": tools if tools else None,
-                "tool_choice": "auto" if tools else None,
-                "temperature": params.get("temperature", 0.7),
-                "top_p": params.get("top_p", 0.8),
-                "presence_penalty": params.get("presence_penalty", 0.0),
-                "max_tokens": params.get("max_tokens", 4096),
-                "timestamp": asyncio.get_event_loop().time(),
+                "messages": convert_to_openai_messages(messages),
+                "tools": tools_payload,
+                "thinking_enabled": thinking_enabled,
+                "timestamp": time.time(),
             }
             
             # REPL 循环：直到调用 finish 或达到最大循环次数
@@ -336,32 +323,39 @@ class AgentManager:
                 # 调用 LLM（带工具）
                 full_response = ""
                 full_thinking = ""
-                tool_calls_data = []
-                current_tool_call = None
+                tool_calls_data = {}  # ponytail: 按 tc.index 累积，支持并发多 tool_calls
                 
                 try:
-                    stream = await client.chat.completions.create(
-                        model=current_model["model"],
-                        messages=messages,
-                        tools=tools if tools else None,
-                        tool_choice="auto" if tools else None,
-                        temperature=params.get("temperature", 0.7),
-                        top_p=params.get("top_p", 0.8),
-                        presence_penalty=params.get("presence_penalty", 0.0),
-                        max_tokens=params.get("max_tokens", 4096),
-                        stream=True
-                    )
+                    # ponytail: langchain ChatOpenAI 1.3.2 不提取 reasoning_content（base.py:5-11 注释明确），
+                    # 改用底层 openai SDK 直接流式，拿 delta.reasoning_content
+                    # 保留 langchain messages 类型 + bind_tools 构建 tools（P2-A 成果）
+                    openai_messages = convert_to_openai_messages(messages)
+                    request_params = dict(llm._default_params)
+                    request_params.update({
+                        "messages": openai_messages,
+                        "stream": True,
+                    })
+                    if tools_payload:
+                        request_params["tools"] = tools_payload
+                    stream = await llm.async_client.create(**request_params)
                 except Exception as e:
                     logger.error(f"调用LLM失败 [{session_id}]: {e}")
                     raise
-                
+
+                # ponytail: tool_calls_data 改为 dict by index 累积
+                # OpenAI 流式协议：tc.index 是稳定标识，tc.id 只在首 chunk 出现
+
                 async for chunk in stream:
                     try:
+                        # chunk 是 openai SDK ChatCompletionChunk
+                        # chunk.choices[0].delta: .content / .reasoning_content / .reasoning / .tool_calls
+                        if not chunk.choices:
+                            continue
                         delta = chunk.choices[0].delta
-                        
+
                         # 处理思考内容 (reasoning_content)
-                        # 注意：非思考模式下 reasoning_content 可能为 None
-                        reasoning_content = getattr(delta, 'reasoning_content', None)
+                        # ponytail: 兼容 DashScope reasoning_content 与 vLLM reasoning 两种字段名
+                        reasoning_content = getattr(delta, 'reasoning_content', None) or getattr(delta, 'reasoning', None)
                         if reasoning_content:
                             thinking_chunk = reasoning_content
                             full_thinking += thinking_chunk
@@ -374,9 +368,9 @@ class AgentManager:
                                     "raw_thinking": full_thinking
                                 }
                             }
-                        
+
                         # 处理普通内容
-                        content = getattr(delta, 'content', None)
+                        content = delta.content
                         if content:
                             content_chunk = content
                             full_response += content_chunk
@@ -387,33 +381,34 @@ class AgentManager:
                                     "raw": full_response
                                 }
                             }
-                        
-                        # 处理工具调用
-                        if hasattr(delta, 'tool_calls') and delta.tool_calls:
+
+                        # 处理工具调用：按 tc.index 累积
+                        # ponytail: openai SDK 返回对象，统一转 dict 处理（兼容对象+dict）
+                        if delta.tool_calls:
                             for tc in delta.tool_calls:
-                                if tc.id:
-                                    # 新的工具调用
-                                    if current_tool_call and current_tool_call.get("id") != tc.id:
-                                        # 保存之前的工具调用
-                                        tool_calls_data.append(current_tool_call)
-                                    current_tool_call = {
-                                        "id": tc.id,
-                                        "type": tc.type or "function",
+                                if not isinstance(tc, dict):
+                                    tc = tc.model_dump() if hasattr(tc, 'model_dump') else vars(tc)
+                                idx = tc.get('index') if tc.get('index') is not None else 0
+                                if idx not in tool_calls_data:
+                                    tool_calls_data[idx] = {
+                                        "id": tc.get('id') or "",
+                                        "type": "function",
                                         "function": {"name": "", "arguments": ""}
                                     }
-                                
-                                if tc.function:
-                                    if tc.function.name:
-                                        current_tool_call["function"]["name"] = tc.function.name
-                                    if tc.function.arguments:
-                                        current_tool_call["function"]["arguments"] += tc.function.arguments
+                                else:
+                                    if tc.get('id') and not tool_calls_data[idx]["id"]:
+                                        tool_calls_data[idx]["id"] = tc.get('id')
+                                fn = tc.get('function') or {}
+                                if fn.get('name'):
+                                    tool_calls_data[idx]["function"]["name"] = fn.get('name')
+                                if fn.get('arguments'):
+                                    tool_calls_data[idx]["function"]["arguments"] += fn.get('arguments')
                     except Exception as e:
                         logger.warning(f"处理LLM流式响应块失败 [{session_id}]: {e}")
                         continue
-                
-                # 保存最后一个工具调用
-                if current_tool_call:
-                    tool_calls_data.append(current_tool_call)
+
+                # 按 index 顺序转为 list
+                tool_calls_data = [tool_calls_data[k] for k in sorted(tool_calls_data.keys())]
                 
                 # 如果没有工具调用，说明 LLM 直接回复了（文本形式）
                 # 纯文本回复视为任务完成，直接结束，不再要求显式调用 finish
@@ -437,10 +432,7 @@ class AgentManager:
                 
                 # 如果有不完整的工具调用，提示 LLM 重新发送
                 if incomplete_calls:
-                    messages.append({
-                        "role": "system",
-                        "content": "工具调用信息不完整，请重新调用工具并确保提供完整的工具名称和参数。"
-                    })
+                    messages.append(SystemMessage(content="工具调用信息不完整，请重新调用工具并确保提供完整的工具名称和参数。"))
                     continue  # 继续循环，让 LLM 重新发送
                 
                 tool_calls_data = valid_tool_calls
@@ -509,9 +501,8 @@ class AgentManager:
                         if tool.name == tool_name:
                             tool_found = True
                             try:
-                                # 使用公共 API run() 而不是内部方法 _run()
-                                # run() 会自动处理 config 等参数
-                                tool_result = tool.run(tool_input)
+                                # ponytail: async 上下文必须用 arun，避免阻塞事件循环
+                                tool_result = await tool.arun(tool_input)
                                 logger.debug(f"工具执行完成 [{session_id}]: {tool_name}")
                             except Exception as e:
                                 tool_result = f"[错误] 工具执行失败: {str(e)}"
@@ -573,16 +564,20 @@ class AgentManager:
                             logger.error(f"保存tool结果失败 [{session_id}]: {e}")
                     
                     # 添加工具调用到消息历史（用于后续 API 调用）
-                    messages.append({
-                        "role": "assistant",
-                        "content": None,
-                        "tool_calls": [tc]
-                    })
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": tc["id"],
-                        "content": str(tool_result)
-                    })
+                    # tc 是 OpenAI 格式 dict，转换为 langchain AIMessage.tool_calls（name/args）
+                    try:
+                        tc_args = json.loads(tc["function"]["arguments"]) if tc["function"]["arguments"] else {}
+                    except json.JSONDecodeError:
+                        tc_args = {}
+                    messages.append(AIMessage(
+                        content="",
+                        tool_calls=[{
+                            "id": tc["id"],
+                            "name": tc["function"]["name"],
+                            "args": tc_args,
+                        }]
+                    ))
+                    messages.append(ToolMessage(content=str(tool_result), tool_call_id=tc["id"]))
                 
                 # 如果调用了 finish，结束循环
                 if finish_called:

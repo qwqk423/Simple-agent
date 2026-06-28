@@ -1,7 +1,6 @@
 """Rerank 适配器 - 对检索结果重排序"""
-from typing import List, Dict, Any, Optional
-import requests
-import os
+from typing import List, Dict, Any
+import httpx
 
 from config import settings, get_config_manager
 from utils.logger import get_logger
@@ -137,7 +136,8 @@ class OpenAIReranker:
 
                 logger.debug(f"尝试 Rerank 端点: {endpoint}, query长度={len(query)}, 文档数={len(documents)}, top_k={top_k}")
 
-                response = requests.post(
+                # ponytail: httpx 替代 requests，openai SDK 已传递依赖 httpx
+                response = httpx.post(
                     url,
                     json=payload,
                     headers=headers,
@@ -158,10 +158,10 @@ class OpenAIReranker:
                         # DashScope 格式
                         return self._parse_dashscope_results(result["output"]["results"], documents, top_k)
 
-            except requests.Timeout:
+            except httpx.TimeoutException:
                 logger.debug(f"Rerank 端点 {endpoint} 超时")
                 continue
-            except requests.ConnectionError:
+            except httpx.ConnectError:
                 logger.debug(f"Rerank 端点 {endpoint} 连接失败")
                 continue
             except Exception as e:
@@ -261,7 +261,8 @@ class FallbackReranker:
             logger.debug(f"FallbackReranker 开始本地重排序: query长度={len(query)}, 文档数={len(documents)}")
 
             # 获取 query embedding
-            query_embedding = self.embed_model.get_query_embedding(query)
+            # ponytail: P2 迁移后 embed_model 是 langchain OpenAIEmbeddings，API 改名
+            query_embedding = self.embed_model.embed_query(query)
             query_vec = np.array(query_embedding)
 
             # 计算每个文档的相似度
@@ -273,7 +274,8 @@ class FallbackReranker:
                     continue
 
                 try:
-                    doc_embedding = self.embed_model.get_text_embedding(text)
+                    # ponytail: P2 迁移后用 embed_documents（批量 API，取首个）
+                    doc_embedding = self.embed_model.embed_documents([text])[0]
                     doc_vec = np.array(doc_embedding)
 
                     # 余弦相似度（添加除零保护）

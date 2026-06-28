@@ -1,80 +1,16 @@
-"""Embedding 适配器 - 使用 OpenAI 兼容接口"""
-from typing import List, Optional, Dict, Any
+"""Embedding 适配器 - 使用 OpenAI 兼容接口
 
-from llama_index.core.embeddings import BaseEmbedding
+ponytail: P2 迁移删 llama_index BaseEmbedding 包装，直接返回 langchain OpenAIEmbeddings。
+llama_index → InMemoryVectorStore 迁移后，所有调用方使用 langchain 原生 embed_query/embed_documents API。
+"""
+from typing import List, Dict, Any
+
 from langchain_openai import OpenAIEmbeddings
 
 from config import settings, get_config_manager
 from utils.logger import get_logger
 
 logger = get_logger("EmbeddingAdapter")
-
-
-class LangChainEmbedding(BaseEmbedding):
-    """LlamaIndex 的 LangChain Embedding 适配器"""
-
-    def __init__(self, langchain_embeddings=None, **kwargs):
-        # 添加父类初始化的错误处理
-        try:
-            super().__init__(**kwargs)
-        except Exception as e:
-            logger.error(f"Embedding 适配器父类初始化失败: {type(e).__name__}: {e}")
-            raise
-        self._langchain_embeddings = langchain_embeddings
-
-    def _get_query_embedding(self, query: str) -> List[float]:
-        """获取查询文本的 embedding"""
-        try:
-            embeddings = self._langchain_embeddings.embed_query(query)
-            logger.debug(f"查询文本 embedding 获取成功，维度={len(embeddings)}")
-            return embeddings
-        except Exception as e:
-            logger.error(f"查询文本 embedding 获取失败: {type(e).__name__}: {e}")
-            raise
-
-    def _get_text_embedding(self, text: str) -> List[float]:
-        """获取单个文本的 embedding"""
-        try:
-            embeddings = self._langchain_embeddings.embed_documents([text])
-            logger.debug(f"单文本 embedding 获取成功，维度={len(embeddings[0])}")
-            return embeddings[0]
-        except Exception as e:
-            logger.error(f"单文本 embedding 获取失败: {type(e).__name__}: {e}")
-            raise
-
-    def _get_text_embeddings(self, texts: List[str]) -> List[List[float]]:
-        """批量获取文本的 embeddings"""
-        try:
-            embeddings = self._langchain_embeddings.embed_documents(texts)
-            logger.debug(f"批量 embedding 获取成功，数量={len(embeddings)}, 维度={len(embeddings[0]) if embeddings else 0}")
-            return embeddings
-        except Exception as e:
-            logger.error(f"批量 embedding 获取失败: {type(e).__name__}: {e}")
-            raise
-
-    async def _aget_query_embedding(self, query: str) -> List[float]:
-        """异步获取查询文本的 embedding"""
-        try:
-            return self._get_query_embedding(query)
-        except Exception as e:
-            logger.error(f"异步查询 embedding 获取失败: {type(e).__name__}: {e}")
-            raise
-
-    async def _aget_text_embedding(self, text: str) -> List[float]:
-        """异步获取单个文本的 embedding"""
-        try:
-            return self._get_text_embedding(text)
-        except Exception as e:
-            logger.error(f"异步单文本 embedding 获取失败: {type(e).__name__}: {e}")
-            raise
-
-    async def _aget_text_embeddings(self, texts: List[str]) -> List[List[float]]:
-        """异步批量获取文本的 embeddings"""
-        try:
-            return self._get_text_embeddings(texts)
-        except Exception as e:
-            logger.error(f"异步批量 embedding 获取失败: {type(e).__name__}: {e}")
-            raise
 
 
 def _get_embedding_config() -> Dict[str, Any]:
@@ -88,7 +24,7 @@ def _get_embedding_config() -> Dict[str, Any]:
         if current_model:
             logger.debug(f"使用 ConfigManager 中的 Embedding 配置: {current_model['name']}")
             return current_model
-    
+
     # 回退到 .env 默认值
     logger.debug("使用 .env 中的 Embedding 默认配置")
     return {
@@ -103,7 +39,7 @@ def create_openai_embedding(
     api_key: str = None,
     base_url: str = None,
     model_id: str = None
-):
+) -> OpenAIEmbeddings:
     """
     创建 OpenAI Embedding 实例
 
@@ -114,7 +50,7 @@ def create_openai_embedding(
         model_id: 指定要使用的模型 ID，如果不指定则使用当前模型
 
     Returns:
-        LangChainEmbedding 实例
+        OpenAIEmbeddings 实例（langchain_openai 原生）
 
     Raises:
         RuntimeError: 如果创建失败
@@ -142,38 +78,28 @@ def create_openai_embedding(
         final_api_key = api_key if api_key is not None else model_config["api_key"]
         final_base_url = base_url if base_url is not None else model_config["base_url"]
 
-        lc_embeddings = OpenAIEmbeddings(
+        embeddings = OpenAIEmbeddings(
             model=final_model,
             api_key=final_api_key,
             base_url=final_base_url
         )
         logger.info(f"OpenAI Embedding 创建成功: model={final_model}, base_url={final_base_url}")
-        return LangChainEmbedding(langchain_embeddings=lc_embeddings)
+        return embeddings
     except Exception as e:
         logger.error(f"OpenAI Embedding 创建失败: {type(e).__name__}: {e}")
         raise
 
 
-def get_available_embedding_models():
-    """
-    获取所有可用的 Embedding 模型列表
-    
-    Returns:
-        模型列表，包含 id, name, model, is_default 等信息
-    """
+def get_available_embedding_models() -> List[Dict[str, Any]]:
+    """获取所有可用的 Embedding 模型列表"""
     cm = get_config_manager()
     if cm:
         return cm.get_models("embedding")
     return []
 
 
-def get_current_embedding_model():
-    """
-    获取当前使用的 Embedding 模型配置
-    
-    Returns:
-        当前模型配置
-    """
+def get_current_embedding_model() -> Dict[str, Any]:
+    """获取当前使用的 Embedding 模型配置"""
     return _get_embedding_config()
 
 

@@ -1,8 +1,6 @@
 """FastAPI 应用入口"""
 import asyncio
-import os
 import sys
-from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -72,7 +70,7 @@ def initialize_app():
 
     logger.info("=" * 50)
     logger.info("Simple Agent 启动成功！")
-    logger.info(f"API 地址: http://localhost:8080")
+    logger.info("API 地址: http://localhost:8080")
     logger.info("=" * 50)
 
 
@@ -82,16 +80,15 @@ INITIALIZATION_TIMEOUT = 120
 
 async def initialize_app_with_timeout():
     """应用初始化（带超时控制）"""
-    loop = asyncio.get_event_loop()
-    with ThreadPoolExecutor() as executor:
-        try:
-            await asyncio.wait_for(
-                loop.run_in_executor(executor, initialize_app),
-                timeout=INITIALIZATION_TIMEOUT
-            )
-        except asyncio.TimeoutError:
-            logger.critical(f"应用初始化超时（>{INITIALIZATION_TIMEOUT}秒）")
-            raise RuntimeError(f"应用初始化超时，请检查相关服务状态")
+    # ponytail: asyncio.to_thread 替代 ThreadPoolExecutor + run_in_executor，少 1 个依赖导入
+    try:
+        await asyncio.wait_for(
+            asyncio.to_thread(initialize_app),
+            timeout=INITIALIZATION_TIMEOUT
+        )
+    except asyncio.TimeoutError:
+        logger.critical(f"应用初始化超时（>{INITIALIZATION_TIMEOUT}秒）")
+        raise RuntimeError("应用初始化超时，请检查相关服务状态")
 
 
 @asynccontextmanager
