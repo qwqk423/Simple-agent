@@ -8,8 +8,8 @@
 
 [![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://www.python.org/)
 [![Node.js](https://img.shields.io/badge/Node.js-18+-green.svg)](https://nodejs.org/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-orange.svg)](https://fastapi.tiangolo.com/)
-[![Next.js](https://img.shields.io/badge/Next.js-15-black.svg)](https://nextjs.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.136+-orange.svg)](https://fastapi.tiangolo.com/)
+[![Next.js](https://img.shields.io/badge/Next.js-15.5-black.svg)](https://nextjs.org/)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 </div>
@@ -69,7 +69,7 @@ workspace/skills/
 - **智能对话压缩**：自动压缩历史对话，降低 Token 消耗
 - **IDE 风格界面**：三栏式布局，集成 Monaco Editor 实时编辑
 - **多模型管理**：支持配置多个 LLM/Embedding/Rerank 模型
-- **RAG 模式**：基于 LlamaIndex 的记忆检索增强
+- **RAG 模式**：基于 langchain InMemoryVectorStore 的记忆检索增强
 
 ---
 
@@ -79,29 +79,32 @@ workspace/skills/
 
 | 技术 | 用途 |
 |------|------|
-| FastAPI 0.115 + Uvicorn 0.32 | Web 框架 |
-| LangChain 0.3 + langchain-community 0.3 | Agent 引擎 |
-| LlamaIndex Core 0.12 | 向量检索 |
-| tiktoken 0.8 | Token 计数 |
-| Pydantic 2.9 + pydantic-settings 2.6 | 数据验证 |
-| BeautifulSoup4 + html2text | HTML 处理 |
-| requests 2.32 | HTTP 请求 |
-| python-multipart 0.0.17 | 文件上传 |
-| PyYAML 6.0 | YAML 解析 |
+| FastAPI 0.136 + Uvicorn 0.49 | Web 框架 |
+| LangChain 1.3 + langchain-openai 1.3 | Agent 引擎 |
+| langchain-text-splitters 1.1 | 文本分割 |
+| langchain-core InMemoryVectorStore | 向量检索 |
+| openai 2.26+ | OpenAI SDK |
+| tiktoken 0.13 | Token 计数 |
+| Pydantic 2.11 + pydantic-settings 2.14 | 数据验证 |
+| html2text | HTML 转 Markdown |
+| python-multipart 0.0.21 | 文件上传 |
+| pypdf 5.9 | PDF 解析 |
+| python-dotenv 1.0 | 环境变量加载 |
+| PyYAML 6.0.2 | YAML 解析 |
 
 ### 前端
 
 | 技术 | 用途 |
 |------|------|
-| Next.js 15.2 | React 框架 |
+| Next.js 15.5 | React 框架 |
 | React 19 + React-DOM 19 | UI 库 |
 | TypeScript 5.8 | 类型安全 |
-| Tailwind CSS 3.4 | 样式 |
+| Tailwind CSS 3.4 + tailwindcss-animate | 样式与动画 |
 | Radix UI | 无障碍组件 |
 | Monaco Editor 0.52 | 代码编辑器 |
 | react-markdown + remark-gfm | Markdown 渲染 |
 | lucide-react | 图标库 |
-| class-variance-authority + clsx | 样式变体 |
+| class-variance-authority + clsx + tailwind-merge | 样式变体 |
 
 ---
 
@@ -243,6 +246,8 @@ Simple-agent/
 │   │   ├── AGENTS.md          # 操作指南
 │   │   ├── MEMORY.md          # 长期记忆
 │   │   ├── BOOTSTRAP.md       # 启动引导
+│   │   ├── memory/            # 每日记忆（RAG 检索源）
+│   │   │   └── YYYY-MM-DD.md
 │   │   └── skills/            # 技能目录
 │   │       └── get_weather/
 │   │           └── SKILL.md
@@ -418,7 +423,7 @@ search_codebase(
 
 ### 10. search_knowledge_base - 知识库搜索
 
-LlamaIndex 向量检索，支持 PDF/MD/TXT 文件。
+langchain 向量检索，支持 PDF/MD/TXT 文件。
 
 ```python
 # 示例
@@ -490,10 +495,17 @@ finish(summary="任务已完成")
 |------|------|------|
 | `/api/config/llm-params` | GET/PUT | LLM 参数管理 |
 | `/api/config/rag-mode` | GET/PUT | RAG 模式开关 |
-| `/api/models/{type}` | GET | 获取模型列表 |
-| `/api/models/{type}` | POST | 添加模型 |
-| `/api/models/{type}/{id}` | PUT | 更新模型 |
-| `/api/models/{type}/{id}` | DELETE | 删除模型 |
+| `/api/config/{type}/models` | GET | 获取模型列表 |
+| `/api/config/{type}/models/{id}` | GET | 获取单个模型 |
+| `/api/config/{type}/models` | POST | 添加模型 |
+| `/api/config/{type}/models/{id}` | PUT | 更新模型 |
+| `/api/config/{type}/models/{id}` | DELETE | 删除模型 |
+| `/api/config/{type}/models/{id}/default` | PUT | 设置默认模型 |
+| `/api/config/{type}/current` | GET | 获取当前模型 |
+| `/api/config/{type}/current` | PUT | 切换当前模型 |
+| `/api/config/{type}/test` | POST | 测试模型连接 |
+
+> `{type}` 取值：`llm`、`embedding`、`rerank`
 
 ### 技能管理
 
@@ -578,7 +590,7 @@ const nextConfig = {
 ### RAG 模式
 
 1. 在右侧检查器面板开启「RAG 模式」
-2. Agent 会在每次对话前检索 `MEMORY.md` 相关内容
+2. Agent 会在每次对话前检索 `workspace/memory/` 目录下的每日记忆文件（`YYYY-MM-DD.md`）
 3. 检索结果显示在聊天界面中
 
 ### 编辑记忆文件
@@ -680,7 +692,7 @@ const nextConfig = {
 
 ### RAG 功能不工作
 
-1. 确认 `workspace/MEMORY.md` 文件存在且有内容
+1. 确认 `workspace/memory/` 目录下存在记忆文件（`YYYY-MM-DD.md`）且有内容
 2. 检查索引是否成功构建
 3. 确认 RAG 模式已开启
 
@@ -700,8 +712,7 @@ const nextConfig = {
 
 ## 🙏 致谢
 
-- [LangChain](https://github.com/langchain-ai/langchain) - Agent 框架
-- [LlamaIndex](https://github.com/run-llama/llama_index) - RAG 框架
+- [LangChain](https://github.com/langchain-ai/langchain) - Agent 框架与向量检索
 - [FastAPI](https://github.com/tiangolo/fastapi) - Web 框架
 - [Next.js](https://github.com/vercel/next.js) - 前端框架
 - [Monaco Editor](https://github.com/microsoft/monaco-editor) - 代码编辑器
